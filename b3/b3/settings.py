@@ -72,6 +72,7 @@ INSTALLED_APPS = [
     "drf_spectacular",
     # First party
     "b3.apps.OTPAdminConfig",
+    "task_lists",
     "users",
     "versions",
 ]

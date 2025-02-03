@@ -28,6 +28,7 @@ from drf_spectacular.views import (
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+    path("task-list/", include("task_lists.urls", namespace="task_list")),
     path("users/", include("users.urls", namespace="users")),
     path("versions/", include("versions.urls", namespace="versions")),
 ]
