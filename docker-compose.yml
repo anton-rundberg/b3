@@ -1,0 +1,70 @@
+version: "3.2"
+
+services:
+  django:
+    build: .
+    image: django-b3
+    container_name: django-b3
+    depends_on:
+      - postgres
+      - redis
+    env_file: .env
+    volumes:
+      - "b3_static_files:/var/www/static/"
+      - "b3_media_files:/var/www/media/"
+      - "./b3:/app"
+    # Use runserver for local development not uwsgi
+    command: "python manage.py runserver 0.0.0.0:8000"
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  postgres:
+    image: postgres:13.4
+    container_name: postgres-b3
+    environment:
+      POSTGRES_DB: b3
+      POSTGRES_PASSWORD: supersecret
+    volumes:
+      - "b3_dbdata:/var/lib/postgresql/data"
+    # Expose port to localhost for debugging
+    ports:
+      - "127.0.0.1:5433:5432"
+
+  redis:
+    image: redis:6.2
+    container_name: redis-b3
+
+  rabbitmq:
+    image: rabbitmq:3.9-management
+    container_name: rabbitmq-b3
+    environment:
+      - RABBITMQ_DEFAULT_USER=admin
+      - RABBITMQ_DEFAULT_PASS=b0lag
+
+  celery-scheduler:
+    image: django-b3
+    container_name: celery-scheduler-b3
+    depends_on:
+      - django
+    env_file: .env
+    entrypoint: "celery -A b3 beat -l info"
+    volumes:
+      - "./b3:/app"
+
+  celery-worker:
+    image: django-b3
+    container_name: celery-worker-b3
+    depends_on:
+      - django
+      - rabbitmq
+    env_file: .env
+    entrypoint: "celery -A b3 worker -l info"
+    volumes:
+      - "b3_static_files:/var/www/static/"
+      - "b3_media_files:/var/www/media/"
+      - "./b3:/app"
+
+volumes:
+  b3_dbdata:
+  b3_static_files:
+  b3_media_files:

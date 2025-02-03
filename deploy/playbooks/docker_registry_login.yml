@@ -1,0 +1,19 @@
+---
+
+- hosts: all
+  tasks:
+    - name: Log into Docker Container Registry
+      docker_login:
+        registry: "{{ REGISTRY_URL }}"
+        username: "{{ DOCKER_ID }}"
+        password: "{{ DOCKER_PASSWORD }}"
+        email: "{{ DOCKER_EMAIL }}"
+        reauthorize: yes
+      when: REGISTRY_URL is not search("amazonaws.com")
+
+    - name: Login into AWS Container Registry
+      shell: . /home/ubuntu/venv/bin/activate && aws ecr get-login-password --region eu-north-1 | docker login --password-stdin -u AWS {{ DOCKER_REPO }}
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ DOCKER_ID }}"
+        AWS_SECRET_ACCESS_KEY: "{{ DOCKER_PASSWORD }}"
+      when: REGISTRY_URL is search("amazonaws.com")

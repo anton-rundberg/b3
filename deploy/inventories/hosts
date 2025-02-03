@@ -1,0 +1,13 @@
+[dev]
+<ENTER DEV SERVER IPs HERE>
+
+[dev:vars]
+ansible_user=ubuntu
+ansible_distribution=ubuntu
+
+[prod]
+<ENTER PROD SERVER IPs HERE>
+
+[prod:vars]
+ansible_user=ubuntu
+ansible_distribution=ubuntu

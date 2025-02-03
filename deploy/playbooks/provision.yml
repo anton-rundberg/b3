@@ -1,0 +1,50 @@
+---
+
+- name: Set up python3 venv
+  hosts: dev, prod
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+  tasks:
+    - name: Install venv
+      become: yes
+      apt:
+        force_apt_get: True
+        update_cache: yes
+        pkg:
+          - python3-venv
+    - name: Create python3 venv
+      command: python3 -m venv /home/ubuntu/venv
+    - name: Install packaging in venv
+      command: /home/ubuntu/venv/bin/pip install packaging
+
+- name: Install pip requirements in venv
+  hosts: dev, prod
+  tasks:
+    - name: Install pip requirements
+      pip:
+        virtualenv: /home/ubuntu/venv
+        virtualenv_python: python3
+        name:
+          - pip
+          - awscli
+          - requests<2.29.0
+          - urllib3<2.0
+        state: latest
+
+- name: Install docker
+  hosts: dev, prod
+  become: yes
+  roles:
+    - install-docker
+
+- name: Set up static frontend
+  hosts: all
+  become: yes
+  tasks:
+    - name: Create /var/www
+      ansible.builtin.file:
+        path: /var/www
+        state: directory
+        mode: "0755"
+        owner: ubuntu
+        group: ubuntu

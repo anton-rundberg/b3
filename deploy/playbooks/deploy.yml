@@ -1,0 +1,177 @@
+---
+
+- name: Setup RDS SSL certificate
+  hosts: dev, prod
+  tasks:
+    - name: Create directory for the cert and key
+      file:
+        path: "{{ RDS_CERTS_PATH }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: 0644
+      become: yes
+    - name: Copy SSL cert from Ansible
+      loop: "{{ rds_certificates }}"
+      copy:
+        content: "{{ item.content }}"
+        dest: "{{ RDS_CERTS_PATH }}{{ item.name }}"
+        owner: ubuntu
+        group: ubuntu
+        mode: 0600
+      become: yes
+      no_log: true
+
+- import_playbook: docker_registry_login.yml tags=deploy
+
+- name: docker-network
+  hosts: dev, prod
+  tasks:
+    - name: Create Docker network
+      docker_network:
+        name: "{{ DOCKER_NETWORK_NAME }}"
+
+- name: redis
+  hosts: dev, prod
+  tasks:
+    - name: Start Redis
+      docker_container:
+        name: redis
+        image: redis
+        restart_policy: unless-stopped
+        log_driver: local
+        networks_cli_compatible: yes
+        networks:
+          - name: "{{ DOCKER_NETWORK_NAME }}"
+      tags:
+        - deploy
+
+- name: rabbitmq
+  hosts: dev, prod
+  tasks:
+    - name: Start rabbitmq
+      docker_container:
+        name: rabbitmq
+        image: rabbitmq:management
+        restart_policy: unless-stopped
+        log_driver: local
+        env:
+          RABBITMQ_DEFAULT_USER: "{{ RABBITMQ_USER }}"
+          RABBITMQ_DEFAULT_PASS: "{{ RABBITMQ_PASSWORD }}"
+        networks_cli_compatible: yes
+        networks:
+          - name: "{{ DOCKER_NETWORK_NAME }}"
+      tags:
+        - deploy
+
+- name: django-uwsgi
+  hosts: dev, prod
+  tasks:
+    - name: Start {{ DOCKER_IMAGE_NAME }} container
+      docker_container:
+        name: "{{ DOCKER_IMAGE_NAME }}"
+        image: "{{ DOCKER_IMAGE }}"
+        restart_policy: unless-stopped
+        log_driver: local
+        recreate: yes
+        pull: yes
+        volumes:
+          - "static_files:{{ django_env.STATIC_ROOT }}"
+          - "{{ RDS_CERTS_PATH }}:/etc/certs/rds"
+        env:
+          "{{ django_env | combine(shared_django_env) | combine(uwsgi_env) }}"
+        networks_cli_compatible: yes
+        networks:
+          - name: "{{ DOCKER_NETWORK_NAME }}"
+      register: uwsgi_image
+      tags:
+        - deploy
+        - bump
+        - app
+
+    - name: Migrate database
+      when: uwsgi_image is changed and run_migrate|default(true)|bool == true
+      docker_container:
+        name: manage_migrate
+        image: "{{ DOCKER_IMAGE }}"
+        command: python manage.py migrate --noinput
+        cleanup: yes
+        detach: no
+        volumes:
+          - "{{ RDS_CERTS_PATH }}:/etc/certs/rds"
+        env:
+          "{{ django_env | combine(shared_django_env) }}"
+        networks_cli_compatible: yes
+        networks:
+          - name: "{{ DOCKER_NETWORK_NAME }}"
+      tags:
+        - deploy
+        - bump
+
+    - name: Collect static files
+      docker_container:
+        name: app-collectstatic
+        image: "{{ DOCKER_IMAGE }}"
+        command: python manage.py collectstatic --noinput
+        cleanup: yes
+        detach: no
+        volumes:
+          - "static_files:{{ django_env.STATIC_ROOT }}"
+        env:
+          "{{ django_env | combine(shared_django_env) }}"
+        networks_cli_compatible: yes
+        networks:
+          - name: "{{ DOCKER_NETWORK_NAME }}"
+      changed_when: false
+
+    - name: Start celery scheduler
+      docker_container:
+        name: celery-scheduler
+        image: "{{ DOCKER_IMAGE }}"
+        restart_policy: unless-stopped
+        log_driver: local
+        entrypoint: celery
+        command: -A b3 beat -l info
+        env:
+          "{{ django_env | combine(shared_django_env) }}"
+        networks_cli_compatible: yes
+        networks:
+          - name: "{{ DOCKER_NETWORK_NAME }}"
+      tags:
+        - deploy
+        - bump
+
+    - name: Start celery worker
+      docker_container:
+        name: celery-worker
+        image: "{{ DOCKER_IMAGE }}"
+        restart_policy: unless-stopped
+        log_driver: local
+        entrypoint: celery
+        command: -A b3 worker -l info
+        volumes:
+          - "static_files:{{ django_env.STATIC_ROOT }}"
+          - "{{ RDS_CERTS_PATH }}:/etc/certs/rds"
+        env:
+          "{{ django_env | combine(shared_django_env) }}"
+        networks_cli_compatible: yes
+        networks:
+          - name: "{{ DOCKER_NETWORK_NAME }}"
+      tags:
+        - deploy
+        - bump
+
+- import_playbook: deploy_nginx.yml tags=deploy
+
+- name: Docker cleanup
+  hosts: dev, prod
+  tasks:
+    - docker_prune:
+        containers: yes
+        containers_filters:
+          # only consider containers created more than 24 hours ago
+          until: 24h
+        images: yes
+        images_filters:
+          until: 24h
+          dangling: false

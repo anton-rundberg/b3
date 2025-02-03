@@ -1,0 +1,186 @@
+version: 2.1
+
+orbs:
+  codecov: codecov/codecov@3.2.3
+
+jobs:
+  lint:
+    working_directory: ~/b3
+    docker:
+      - image: cimg/python:3.11
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - venv-{{ .Environment.CIRCLE_SHA1 }}
+      - run:
+          name: Install dependencies
+          command: |
+            python3 -m venv venv
+            . venv/bin/activate
+            pip install \
+              "flake8>=7.1.0,<7.1.99" \
+              "black==24.4.2" \
+              "isort>=5.13.2,<5.13.99"
+      - run:
+          name: Black
+          command: |
+            . venv/bin/activate
+            python -m black b3 --check
+      - run:
+          name: Isort
+          command: |
+            . venv/bin/activate
+            python -m isort b3 --check-only
+      - run:
+          name: Flake8 lint
+          working_directory: b3
+          command: |
+            . ../venv/bin/activate
+            python -m flake8 .
+      - save_cache:
+          key: venv-{{ .Environment.CIRCLE_SHA1 }}-{{ epoch }}
+          paths:
+            - venv/
+
+  unittest:
+    working_directory: ~/b3
+    docker:
+      - image: cimg/python:3.11
+    steps:
+      - checkout
+      - setup_remote_docker:
+          docker_layer_caching: true
+      - run:
+          name: Build application Docker image
+          command: |
+            docker build \
+              --build-arg SOURCE_COMMIT=${CIRCLE_SHA1} \
+              .
+      - run:
+          name: Install dependencies
+          command: |
+            sudo apt-get install build-essential
+      - run:
+          name: Run tests
+          command: |
+            make ci-test
+      - persist_to_workspace:
+          root: ~/b3
+          paths:
+            - coverage.xml
+
+  upload-to-codecov:
+    working_directory: ~/b3
+    docker:
+      - image: cimg/python:3.11
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - venv-{{ .Environment.CIRCLE_SHA1 }}
+      - attach_workspace:
+          at: ~/b3
+      - codecov/upload:
+          file: coverage.xml
+          flags: unittests
+      - store_artifacts:
+          path: coverage.xml
+          destination: coverage-reports
+
+  publish_latest_image:
+    working_directory: ~/b3
+    docker:
+      - image: cimg/python:3.11
+    steps:
+      - checkout
+      - setup_remote_docker:
+          docker_layer_caching: true
+      - run:
+          name: Build application Docker image
+          command: |
+            docker build \
+              --build-arg SOURCE_COMMIT=${CIRCLE_SHA1} \
+              -t django:latest \
+              -t django:${CIRCLE_SHA1} \
+              -t {{AWS_ACCOUNT_ID}}.dkr.ecr.eu-north-1.amazonaws.com/b3:latest \
+              -t {{AWS_ACCOUNT_ID}}.dkr.ecr.eu-north-1.amazonaws.com/b3:${CIRCLE_SHA1} \
+              -t circleci_django-b3-ci \
+              .
+      - restore_cache:
+          keys:
+            - venv-{{ .Environment.CIRCLE_SHA1 }}
+      - run:
+          name: Publish images to registry
+          command: |
+            python3 -m venv venv
+            . venv/bin/activate
+            pip install awscli
+            aws ecr get-login-password --region eu-north-1 | docker login --password-stdin -u AWS {{AWS_ACCOUNT_ID}}.dkr.ecr.eu-north-1.amazonaws.com/b3
+            docker tag django {{AWS_ACCOUNT_ID}}.dkr.ecr.eu-north-1.amazonaws.com/b3:latest
+            docker push {{AWS_ACCOUNT_ID}}.dkr.ecr.eu-north-1.amazonaws.com/b3:latest
+
+  publish_release_image:
+    working_directory: ~/b3
+    docker:
+      - image: cimg/python:3.11
+    steps:
+      - checkout
+      - setup_remote_docker:
+          docker_layer_caching: true
+      - run:
+          name: Build application Docker image
+          command: |
+            docker build \
+              --build-arg SOURCE_COMMIT=${CIRCLE_SHA1} \
+              -t django:latest \
+              -t django:${CIRCLE_SHA1} \
+              -t {{AWS_ACCOUNT_ID}}.dkr.ecr.eu-north-1.amazonaws.com/b3:latest \
+              -t {{AWS_ACCOUNT_ID}}.dkr.ecr.eu-north-1.amazonaws.com/b3:${CIRCLE_SHA1} \
+              -t circleci_django-b3-ci \
+              .
+      - restore_cache:
+          keys:
+            - venv-{{ .Environment.CIRCLE_SHA1 }}
+      - run:
+          name: Publish images to registry
+          command: |
+            python3 -m venv venv
+            . venv/bin/activate
+            pip install awscli
+            aws ecr get-login-password --region eu-north-1 | docker login --password-stdin -u AWS {{AWS_ACCOUNT_ID}}.dkr.ecr.eu-north-1.amazonaws.com/b3
+            docker tag django {{AWS_ACCOUNT_ID}}.dkr.ecr.eu-north-1.amazonaws.com/b3:${CIRCLE_TAG}
+            docker push {{AWS_ACCOUNT_ID}}.dkr.ecr.eu-north-1.amazonaws.com/b3:${CIRCLE_TAG}
+
+workflows:
+  version: 2
+  backend:
+    jobs:
+      - lint:
+          filters:
+            tags:
+              only: /release-.*/
+      - unittest:
+          requires:
+            - lint
+          filters:
+            tags:
+              only: /release-.*/
+      - upload-to-codecov:
+          requires:
+            - unittest
+            # - publish_latest_image:
+            #     requires:
+            #       - unittest
+            #     filters:
+            #       branches:
+            #         only:
+            #           - main
+      - publish_release_image:
+          requires:
+            - unittest
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: /release-[0-9]+-[0-9]+/

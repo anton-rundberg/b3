@@ -1,0 +1,16 @@
+---
+
+DOCKER_ID: "{{ vault_DOCKER_ID }}"
+DOCKER_EMAIL: "{{ vault_DOCKER_EMAIL }}"
+DOCKER_PASSWORD: "{{ vault_DOCKER_PASSWORD }}"
+DOCKER_IMAGE_NAME: "b3"
+DOCKER_NETWORK_NAME: "b3_network"
+REGISTRY_URL: ""
+DOCKER_REPO: "{{ REGISTRY_URL }}/{{ DOCKER_IMAGE_NAME }}"
+DOCKER_IMAGE: "{{ DOCKER_REPO }}:{{ DOCKER_IMAGE_TAG }}"
+
+RDS_CERTS_PATH: "/etc/ssl/certs/rds/"
+
+shared_django_env:
+  SENTRY_DSN: "{{ vault_SENTRY_DSN }}"
+  FORCE_SCRIPT_NAME: "/api"

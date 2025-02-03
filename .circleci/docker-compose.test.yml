@@ -1,0 +1,27 @@
+version: '3'
+
+services:
+  redis-b3-ci:
+    image: redis:6.2
+    container_name: redis-b3-ci
+
+  postgres-b3-ci:
+    image: postgres:13.4
+    container_name: postgres-b3-ci
+    environment:
+      - POSTGRES_USER=test
+      - POSTGRES_PASSWORD=password
+
+  django-b3-ci:
+    build: ../
+    container_name: django-b3-ci
+    depends_on:
+      - postgres-b3-ci
+      - redis-b3-ci
+    environment:
+      DB_HOST: postgres-b3-ci
+      DB_USER: test
+      DB_PASSWORD: password
+      REDIS_URL: "redis://redis-b3-ci:6379/2"
+      SECRET_KEY: "ci-test"
+      DEBUG: "False"
